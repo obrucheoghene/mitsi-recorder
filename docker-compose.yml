@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  mitsi-recording:
+    build: .
+    container_name: mitsi-recording-service
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      LOCAL_CLIENT_URL: http://localhost:5173
+      TEMP_RECORDING_DIR: /tmp/mitsi-recordings
+      MERGING_SERVICE_URL: http://mitsi-merging:3001
+      CLEANUP_AFTER_MERGE: "true"
+    volumes:
+      - ./recordings:/tmp/mitsi-recordings
+    depends_on:
+      - mitsi-merging
+    networks:
+      - mitsi-net
+
+  mitsi-merging:
+    image: mitsi-merging:latest
+    container_name: mitsi-merging-service
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+    networks:
+      - mitsi-net
+
+networks:
+  mitsi-net:
+    driver: bridge
+
+volumes:
+  recordings:
