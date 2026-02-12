@@ -1,0 +1,53 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+
+  recorder-1:
+    build: .
+    ports:
+      - '3003:3003'
+    environment:
+      - PORT=3003
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - AWS_REGION=${AWS_REGION}
+      - AWS_SQS_QUEUE_URL=${AWS_SQS_QUEUE_URL}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - MITSI_WEB_URL=${MITSI_WEB_URL}
+      - MITSI_API_KEY=${MITSI_API_KEY}
+      - RECORDINGS_DIR=/tmp/mitsi-recordings
+    volumes:
+      - recordings:/tmp/mitsi-recordings
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  recorder-2:
+    build: .
+    ports:
+      - '3004:3003'
+    environment:
+      - PORT=3003
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - AWS_REGION=${AWS_REGION}
+      - AWS_SQS_QUEUE_URL=${AWS_SQS_QUEUE_URL}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - MITSI_WEB_URL=${MITSI_WEB_URL}
+      - MITSI_API_KEY=${MITSI_API_KEY}
+      - RECORDINGS_DIR=/tmp/mitsi-recordings
+    volumes:
+      - recordings:/tmp/mitsi-recordings
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  recordings:

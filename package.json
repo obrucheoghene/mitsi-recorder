@@ -1,0 +1,36 @@
+{
+  "name": "mitsi-recorder",
+  "version": "1.0.0",
+  "description": "Mitsi meeting recording service",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.988.0",
+    "@nestjs/common": "^11.1.13",
+    "@nestjs/config": "^4.0.3",
+    "@nestjs/core": "^11.1.13",
+    "@nestjs/platform-express": "^11.1.13",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.3",
+    "ioredis": "^5.9.3",
+    "playwright": "^1.58.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.16",
+    "@nestjs/schematics": "^11.0.9",
+    "@types/node": "^25.2.3",
+    "@types/uuid": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.9.3"
+  }
+}
