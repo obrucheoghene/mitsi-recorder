@@ -6,12 +6,11 @@
   "scripts": {
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "nest start --watch",
+    "dev": "nest start --watch",
     "start:prod": "node dist/main.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
-    "@aws-sdk/client-sqs": "^3.988.0",
     "@nestjs/common": "^11.1.13",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.1.13",

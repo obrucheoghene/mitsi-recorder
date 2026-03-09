@@ -1,38 +1,44 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import Redis from 'ioredis';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { SessionService } from './session.service';
+import { BrowserService } from './browser.service';
+import { CaptureService } from './capture.service';
+import { StorageService } from './storage.service';
 import { StartRecordingDto } from '../dto/start-recording.dto';
 import { StopRecordingDto } from '../dto/stop-recording.dto';
 import { RecordingSession, SessionStatus } from '../../common/types';
 import { RecordingException } from '../../common/exceptions';
-import { SQS_CLIENT } from '../../queue/queue.module';
-import { HttpStatus } from '@nestjs/common';
+import { EventEmitter } from 'events';
 
 @Injectable()
 export class RecordingService {
   private readonly logger = new Logger(RecordingService.name);
-  private readonly queueUrl: string;
-  private readonly redisPublisher: Redis;
+  private readonly stopEmitter = new EventEmitter();
+  private busy = false;
 
   constructor(
-    @Inject(SQS_CLIENT) private readonly sqsClient: SQSClient,
     private readonly sessionService: SessionService,
-    private readonly configService: ConfigService,
-  ) {
-    this.queueUrl = this.configService.get<string>('aws.sqsQueueUrl')!;
-    this.redisPublisher = new Redis(
-      this.configService.get<string>('redis.url')!,
-    );
+    private readonly browserService: BrowserService,
+    private readonly captureService: CaptureService,
+    private readonly storageService: StorageService,
+  ) {}
+
+  isBusy(): boolean {
+    return this.busy;
   }
 
   async startRecording(
     dto: StartRecordingDto,
   ): Promise<{ sessionId: string; status: string }> {
+    if (this.busy) {
+      throw new RecordingException(
+        'This recorder instance is already recording',
+        HttpStatus.CONFLICT,
+      );
+    }
+
     const { meetingId } = dto;
 
-    // Check for existing active recording
+    // Prevent duplicate recording for the same meeting
     const existing = await this.sessionService.getSessionByMeetingId(meetingId);
     if (
       existing &&
@@ -44,25 +50,15 @@ export class RecordingService {
       );
     }
 
-    // Create session
     const session = await this.sessionService.createSession(meetingId);
+    this.busy = true;
 
-    // Send message to SQS
-    await this.sqsClient.send(
-      new SendMessageCommand({
-        QueueUrl: this.queueUrl,
-        MessageBody: JSON.stringify({
-          sessionId: session.sessionId,
-          meetingId,
-        }),
-      }),
-    );
+    // Run the recording lifecycle in the background — do not await
+    this.runRecording(session.sessionId, meetingId).catch((err) => {
+      this.logger.error(`Unhandled recording error: ${err?.message}`);
+    });
 
-    this.logger.log(
-      `Recording queued: session=${session.sessionId}, meeting=${meetingId}`,
-    );
-
-    return { sessionId: session.sessionId, status: SessionStatus.QUEUED };
+    return { sessionId: session.sessionId, status: SessionStatus.STARTING };
   }
 
   async stopRecording(
@@ -85,18 +81,7 @@ export class RecordingService {
       );
     }
 
-    // Publish stop signal via Redis pub/sub
-    const channel = `recording:stop:${session.sessionId}`;
-    await this.redisPublisher.publish(channel, 'stop');
-
-    // Update session status
-    await this.sessionService.updateSession(session.sessionId, {
-      status: SessionStatus.STOPPING,
-    });
-
-    this.logger.log(
-      `Stop signal sent: session=${session.sessionId}, meeting=${meetingId}`,
-    );
+    this.stopEmitter.emit(`stop:${session.sessionId}`);
 
     return { sessionId: session.sessionId, status: SessionStatus.STOPPING };
   }
@@ -110,5 +95,91 @@ export class RecordingService {
       );
     }
     return session;
+  }
+
+  private async runRecording(
+    sessionId: string,
+    meetingId: string,
+  ): Promise<void> {
+    try {
+      await this.sessionService.updateSession(sessionId, {
+        status: SessionStatus.STARTING,
+      });
+
+      const outputDir = this.storageService.getOutputDir(sessionId);
+      this.storageService.ensureDir(outputDir);
+
+      await this.browserService.createRecordingPage(
+        sessionId,
+        meetingId,
+        outputDir,
+      );
+
+      await this.browserService.startAudioCapture(sessionId, outputDir);
+
+      await this.sessionService.updateSession(sessionId, {
+        status: SessionStatus.ACTIVE,
+      });
+
+      this.logger.log(`Recording active: session=${sessionId}`);
+
+      await this.waitForStop(sessionId);
+
+      await this.sessionService.updateSession(sessionId, {
+        status: SessionStatus.STOPPING,
+      });
+
+      const audioPath = await this.browserService.stopAudioCapture();
+      const videoPath = await this.browserService.closeActivePage();
+
+      let finalOutputPath: string | undefined = videoPath ?? undefined;
+
+      if (videoPath && audioPath) {
+        const mergedPath = this.storageService.getOutputPath(sessionId);
+        try {
+          await this.captureService.mergeAudioVideo(
+            videoPath,
+            audioPath,
+            mergedPath,
+          );
+          // Merge succeeded — remove the intermediate raw files
+          this.storageService.cleanupTempFiles(videoPath, audioPath);
+          finalOutputPath = mergedPath;
+        } catch (err) {
+          // Merge failed — keep the raw video as the output
+          this.logger.warn(
+            `Audio/video merge failed; keeping video-only output at: ${videoPath}`,
+          );
+          this.storageService.cleanupTempFiles(audioPath);
+        }
+      }
+
+      await this.sessionService.updateSession(sessionId, {
+        status: SessionStatus.STOPPED,
+        stoppedAt: new Date().toISOString(),
+        outputPath: finalOutputPath,
+      });
+
+      this.logger.log(`Recording completed: session=${sessionId}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Recording failed: session=${sessionId} — ${message}`);
+      await this.sessionService.updateSession(sessionId, {
+        status: SessionStatus.FAILED,
+        error: message,
+        stoppedAt: new Date().toISOString(),
+      });
+      // Attempt cleanup even on failure
+      await this.browserService.stopAudioCapture().catch(() => {});
+      await this.browserService.closeActivePage().catch(() => {});
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private waitForStop(sessionId: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.stopEmitter.once(`stop:${sessionId}`, resolve);
+    });
   }
 }

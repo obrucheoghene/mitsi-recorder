@@ -17,7 +17,7 @@ export class StorageService {
   }
 
   getOutputPath(sessionId: string): string {
-    return path.join(this.getOutputDir(sessionId), `${sessionId}.mp4`);
+    return path.join(this.getOutputDir(sessionId), `${sessionId}.webm`);
   }
 
   ensureDir(dirPath: string): void {
@@ -27,15 +27,15 @@ export class StorageService {
     }
   }
 
-  cleanupTempFiles(sessionId: string): void {
-    const dir = this.getOutputDir(sessionId);
-    if (!fs.existsSync(dir)) return;
-
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      // Keep only the final .mp4 output
-      if (!file.endsWith('.mp4') || file.includes('-audio')) {
-        const filePath = path.join(dir, file);
+  /**
+   * Removes intermediate files produced during recording.
+   * @param filePaths Explicit list of temp file paths to delete (e.g. the raw
+   *   .webm and .aac files after a successful merge). Caller decides what is
+   *   safe to remove so we never delete the only remaining output.
+   */
+  cleanupTempFiles(...filePaths: string[]): void {
+    for (const filePath of filePaths) {
+      if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         this.logger.debug(`Cleaned up: ${filePath}`);
       }

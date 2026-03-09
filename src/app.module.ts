@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import env from './config/env';
 import { RecordingModule } from './recording/recording.module';
 import { HealthModule } from './health/health.module';
-import { QueueModule } from './queue/queue.module';
 
 @Module({
   imports: [
@@ -13,7 +12,6 @@ import { QueueModule } from './queue/queue.module';
     }),
     RecordingModule,
     HealthModule,
-    QueueModule,
   ],
 })
 export class AppModule {}

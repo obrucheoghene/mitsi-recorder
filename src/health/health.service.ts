@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { RecordingService } from '../recording/services/recording.service';
 import { StorageService } from '../recording/services/storage.service';
-import { QueueConsumerService } from '../queue/queue-consumer.service';
 
 @Injectable()
 export class HealthService {
@@ -11,8 +11,8 @@ export class HealthService {
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly recordingService: RecordingService,
     private readonly storageService: StorageService,
-    private readonly queueConsumerService: QueueConsumerService,
   ) {
     this.redis = new Redis(this.configService.get<string>('redis.url')!);
   }
@@ -23,7 +23,7 @@ export class HealthService {
     return {
       status: 'ok',
       uptime: Math.floor((Date.now() - this.startTime) / 1000),
-      recording: this.queueConsumerService.isBusy(),
+      busy: this.recordingService.isBusy(),
       redis: redisStatus,
     };
   }
@@ -31,12 +31,13 @@ export class HealthService {
   async getReady() {
     const redisOk = await this.checkRedis();
     const storageOk = this.storageService.recordingsDirExists();
+    const available = !this.recordingService.isBusy();
 
-    const ready = redisOk && storageOk;
     return {
-      ready,
+      ready: redisOk && storageOk && available,
       redis: redisOk,
       storage: storageOk,
+      available,
     };
   }
 
