@@ -18,6 +18,7 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
   private activeContext: BrowserContext | null = null;
   private audioWriteStream: fs.WriteStream | null = null;
   private activeAudioPath: string | null = null;
+  private pageDisconnectPromise: Promise<'crash' | 'close'> | null = null;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -81,6 +82,17 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
     const page = await context.newPage();
     this.activeContext = context;
     this.activePage = page;
+
+    this.pageDisconnectPromise = new Promise<'crash' | 'close'>((resolve) => {
+      page.once('crash', () => {
+        this.logger.warn(`Page crashed for session: ${sessionId}`);
+        resolve('crash');
+      });
+      page.once('close', () => {
+        this.logger.warn(`Page closed unexpectedly for session: ${sessionId}`);
+        resolve('close');
+      });
+    });
 
     const webUrl = this.configService.get<string>('mitsi.webUrl');
     const apiKey = this.configService.get<string>('mitsi.apiKey');
@@ -259,6 +271,12 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
     return audioPath;
   }
 
+  waitForPageDisconnect(): Promise<'crash' | 'close'> {
+    // If no page is active, return a promise that never resolves so it never
+    // wins the race in RecordingService
+    return this.pageDisconnectPromise ?? new Promise(() => {});
+  }
+
   async closeActivePage(): Promise<string | null> {
     let videoPath: string | null = null;
 
@@ -275,6 +293,8 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
       await this.activeContext.close();
       this.activeContext = null;
     }
+
+    this.pageDisconnectPromise = null;
 
     if (videoPath) {
       this.logger.log(`Video saved → ${videoPath}`);

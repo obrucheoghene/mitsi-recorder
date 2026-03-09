@@ -1,4 +1,5 @@
 import { Injectable, Logger, HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SessionService } from './session.service';
 import { BrowserService } from './browser.service';
 import { CaptureService } from './capture.service';
@@ -16,6 +17,7 @@ export class RecordingService {
   private busy = false;
 
   constructor(
+    private readonly configService: ConfigService,
     private readonly sessionService: SessionService,
     private readonly browserService: BrowserService,
     private readonly captureService: CaptureService,
@@ -123,7 +125,27 @@ export class RecordingService {
 
       this.logger.log(`Recording active: session=${sessionId}`);
 
-      await this.waitForStop(sessionId);
+      const maxDurationMs = this.configService.get<number>(
+        'recording.maxDurationMs',
+      )!;
+
+      const stopReason = await Promise.race([
+        this.waitForStop(sessionId).then(() => 'stop' as const),
+        this.browserService.waitForPageDisconnect(),
+        new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), maxDurationMs),
+        ),
+      ]);
+
+      if (stopReason === 'timeout') {
+        this.logger.warn(
+          `Max recording duration reached (${maxDurationMs}ms): session=${sessionId}`,
+        );
+      } else if (stopReason !== 'stop') {
+        this.logger.warn(
+          `Recording ended due to page ${stopReason}: session=${sessionId}`,
+        );
+      }
 
       await this.sessionService.updateSession(sessionId, {
         status: SessionStatus.STOPPING,
